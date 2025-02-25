@@ -1,0 +1,136 @@
+import numpy as np
+import matplotlib.pyplot as plt
+import skfuzzy as fuzz
+from skfuzzy import control as ctrl
+
+# Sistem Parametreleri
+initial_temp = 25.0
+sim_time = 100
+dt = 0.1
+
+# PID Değişkenleri
+Kp = 0.5
+Ki = 0.1
+Kd = 0.05
+integral = 0.0
+prev_error = 0.0
+temperature = initial_temp
+output_history = []
+time_history = []
+setpoint_history = []
+
+# Sistem Modeli
+a = 0.1
+b = 0.5
+
+# Hedef Değer Fonksiyonu (Non-Lineer ve Değiştirilebilir)
+def setpoint_function(t, function_type='sine'):
+    """
+    Zamanla değişen hedef değer fonksiyonu.
+    function_type: 'sine', 'square', 'exponential', 'custom' gibi seçenekler.
+    """
+    if function_type == 'sine':
+        return 50 + 20 * np.sin(0.1 * t)  # Sinüs dalgası
+    elif function_type == 'square':
+        return 50 + 20 * np.sign(np.sin(0.1 * t))  # Kare dalga
+    elif function_type == 'exponential':
+        return 50 * (1 - np.exp(-0.05 * t))  # Üstel büyüme
+    elif function_type == 'custom':
+        return 50 + 10 * np.cos(0.2 * t) + 15 * np.sin(0.1 * t)  # Özel bir kombinasyon
+    else:
+        raise ValueError(f"Geçersiz fonksiyon tipi: {function_type}")
+
+# Bulanık Mantık Tanımlamaları
+error = ctrl.Antecedent(np.arange(-50, 51, 1), 'error')
+delta_error = ctrl.Antecedent(np.arange(-10, 11, 1), 'delta_error')
+Kp_adj = ctrl.Consequent(np.arange(0, 2, 0.1), 'Kp_adj')
+Ki_adj = ctrl.Consequent(np.arange(0, 0.5, 0.01), 'Ki_adj')
+Kd_adj = ctrl.Consequent(np.arange(0, 1, 0.05), 'Kd_adj')
+
+# Üyelik Fonksiyonları
+error['negative'] = fuzz.trimf(error.universe, [-50, -25, 0])
+error['zero'] = fuzz.trimf(error.universe, [-25, 0, 25])
+error['positive'] = fuzz.trimf(error.universe, [0, 25, 50])
+
+delta_error['negative'] = fuzz.trimf(delta_error.universe, [-10, -5, 0])
+delta_error['zero'] = fuzz.trimf(delta_error.universe, [-5, 0, 5])
+delta_error['positive'] = fuzz.trimf(delta_error.universe, [0, 5, 10])
+
+Kp_adj['low'] = fuzz.trimf(Kp_adj.universe, [0, 0, 1])
+Kp_adj['medium'] = fuzz.trimf(Kp_adj.universe, [0.5, 1, 1.5])
+Kp_adj['high'] = fuzz.trimf(Kp_adj.universe, [1, 1.5, 2])
+
+Ki_adj['low'] = fuzz.trimf(Ki_adj.universe, [0, 0, 0.25])
+Ki_adj['medium'] = fuzz.trimf(Ki_adj.universe, [0.1, 0.25, 0.4])
+Ki_adj['high'] = fuzz.trimf(Ki_adj.universe, [0.25, 0.4, 0.5])
+
+Kd_adj['low'] = fuzz.trimf(Kd_adj.universe, [0, 0, 0.5])
+Kd_adj['medium'] = fuzz.trimf(Kd_adj.universe, [0.25, 0.5, 0.75])
+Kd_adj['high'] = fuzz.trimf(Kd_adj.universe, [0.5, 0.75, 1])
+
+# Kurallar (Genişletilmiş)
+rule1 = ctrl.Rule(error['negative'] & delta_error['negative'], (Kp_adj['high'], Ki_adj['low'], Kd_adj['high']))
+rule2 = ctrl.Rule(error['zero'] & delta_error['zero'], (Kp_adj['medium'], Ki_adj['medium'], Kd_adj['medium']))
+rule3 = ctrl.Rule(error['positive'] & delta_error['positive'], (Kp_adj['high'], Ki_adj['low'], Kd_adj['high']))
+rule4 = ctrl.Rule(error['negative'] & delta_error['positive'], (Kp_adj['low'], Ki_adj['high'], Kd_adj['low']))
+rule5 = ctrl.Rule(error['positive'] & delta_error['negative'], (Kp_adj['low'], Ki_adj['high'], Kd_adj['low']))
+rule6 = ctrl.Rule(error['positive'] & delta_error['zero'], (Kp_adj['medium'], Ki_adj['medium'], Kd_adj['low']))
+rule7 = ctrl.Rule(error['negative'] & delta_error['zero'], (Kp_adj['medium'], Ki_adj['medium'], Kd_adj['low']))
+rule8 = ctrl.Rule(error['zero'] & delta_error['negative'], (Kp_adj['low'], Ki_adj['medium'], Kd_adj['medium']))
+rule9 = ctrl.Rule(error['zero'] & delta_error['positive'], (Kp_adj['low'], Ki_adj['medium'], Kd_adj['medium']))
+
+# Bulanık Kontrol Sistemi
+fuzzy_ctrl = ctrl.ControlSystem([rule1, rule2, rule3, rule4, rule5, rule6, rule7, rule8, rule9])
+fuzzy_tuning = ctrl.ControlSystemSimulation(fuzzy_ctrl)
+
+# Simülasyon Döngüsü
+selected_function = 'custom'  # İstediğiniz fonksiyonu buradan seçin: 'sine', 'square', 'exponential', 'custom'
+for t in np.arange(0, sim_time, dt):
+    # Dinamik hedef değer (seçilen fonksiyonu kullan)
+    setpoint = setpoint_function(t, function_type=selected_function)  # function_type açıkça belirtiliyor
+    
+    current_error = setpoint - temperature
+    delta_error_val = (current_error - prev_error) / dt if t > 0 else 0
+    
+    # Giriş değerlerini sınırla
+    error_val = np.clip(current_error, -50, 50)
+    delta_error_val = np.clip(delta_error_val, -10, 10)
+    
+    fuzzy_tuning.input['error'] = error_val
+    fuzzy_tuning.input['delta_error'] = delta_error_val
+    
+    try:
+        fuzzy_tuning.compute()
+        Kp = fuzzy_tuning.output['Kp_adj']
+        Ki = fuzzy_tuning.output['Ki_adj']
+        Kd = fuzzy_tuning.output['Kd_adj']
+    except Exception as e:
+        print(f"Hata oluştu: {e}")
+        print(f"error: {error_val}, delta_error: {delta_error_val}")
+        Kp, Ki, Kd = 0.5, 0.1, 0.05
+    
+    # PID kontrol sinyali
+    proportional = Kp * current_error
+    integral += Ki * current_error * dt
+    derivative = Kd * delta_error_val
+    control_signal = proportional + integral + derivative
+    
+    # Sistem güncellemesi
+    dT = (-a * temperature + b * control_signal) * dt
+    temperature += dT
+    
+    output_history.append(temperature)
+    time_history.append(t)
+    setpoint_history.append(setpoint)
+    prev_error = current_error
+
+# Görselleştirme
+plt.figure(figsize=(10, 6))
+plt.plot(time_history, output_history, label='Sıcaklık (°C)')
+plt.plot(time_history, setpoint_history, 'r--', label=f'Hedef Sıcaklık ({selected_function})')
+plt.xlabel('Zaman (s)')
+plt.ylabel('Sıcaklık (°C)')
+plt.title(f'AI Destekli PID Kontrol - {selected_function.capitalize()} Hedef Değer')
+plt.legend()
+plt.grid()
+plt.show()
