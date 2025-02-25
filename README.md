@@ -75,3 +75,6 @@ Eğer bulanık mantık hesaplama hatası alırsanız, giriş değerlerinin (erro
 Daha karmaşık sistemler için fiziksel bir modeli entegre edebilirsiniz.
 Lisans
 Bu proje, MIT Lisansı altında açık kaynaktır. Detaylar için LICENSE dosyasına bakın
+git add LICENSE README.md
+git commit -m "Lisans ve README eklendi"
+git push origin main
